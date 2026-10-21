@@ -1,3 +1,16 @@
 # Changelog
+## [0.3.0] - 2026-10-21
+### Breaking changes
+ - api break: fix: encode L2TP_ATTR_DATA_SEQ as u8. (870c13d)
+
+### New features
+ - N/A
+
+### Bug fixes
+ - docs: clarify UDP checksum and FD attribute semantics. (29ef892)
+ - validate L2TP interface name length. (2a204d3)
+ - validate L2TP cookie lengths. (ba969f5)
+ - Enable GitHub CI. (2d876f5)
+
 ## [0.1.0] - 2026-10-16
  - Initial release
