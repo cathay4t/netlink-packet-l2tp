@@ -94,12 +94,7 @@ impl L2tpIfName {
         Self::new(c_string(payload))
     }
 
-    // Length of the attribute value, the name plus its terminating NUL.
-    pub(crate) fn value_len(&self) -> usize {
-        self.len() + 1
-    }
-
-    pub(crate) fn try_emit_into(
+    pub(crate) fn emit_into(
         &self,
         out: &mut Vec<u8>,
     ) -> Result<(), EncodeError> {

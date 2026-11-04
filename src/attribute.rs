@@ -4,9 +4,8 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 
 use netlink_packet_core::{
     DecodeError, DefaultNla, EncodeError, ErrorContext, NLA_MAX_VALUE_LEN,
-    NLA_TYPE_MASK, Nla, NlaBuffer, NlasIterator, Parseable, TryEmit, TryNla,
+    NLA_TYPE_MASK, NlaBuffer, NlasIterator, Parseable, emit_nlas_into,
     nla_total_size, parse_i32, parse_u8, parse_u16, parse_u32, parse_u64,
-    try_emit_nlas_into,
 };
 
 use crate::L2tpIfName;
@@ -216,60 +215,6 @@ pub enum L2tpAttribute {
 }
 
 impl L2tpAttribute {
-    fn value_len_raw(&self) -> Result<usize, EncodeError> {
-        let len = match self {
-            Self::PwType(_)
-            | Self::EncapType(_)
-            | Self::Offset(_)
-            | Self::VlanId(_)
-            | Self::UdpSport(_)
-            | Self::UdpDport(_)
-            | Self::Mtu(_)
-            | Self::Mru(_) => 2,
-            Self::DataSeq(_)
-            | Self::L2SpecType(_)
-            | Self::L2SpecLen(_)
-            | Self::ProtoVersion(_)
-            | Self::UdpCsum(_)
-            | Self::RecvSeq(_)
-            | Self::SendSeq(_)
-            | Self::LnsMode(_)
-            | Self::UsingIpsec(_) => 1,
-            Self::ConnId(_)
-            | Self::PeerConnId(_)
-            | Self::SessionId(_)
-            | Self::PeerSessionId(_)
-            | Self::Debug(_)
-            | Self::IpSaddr(_)
-            | Self::IpDaddr(_)
-            | Self::Fd(_) => 4,
-            Self::RecvTimeout(_) => 8,
-            Self::Ip6Saddr(_) | Self::Ip6Daddr(_) => 16,
-            Self::Cookie(cookie) | Self::PeerCookie(cookie) => cookie.len(),
-            Self::IfName(name) => name.value_len(),
-            Self::Stats(stats) => {
-                let mut len = 0usize;
-                for stat in stats {
-                    let stat_len = stat.total_len_raw()?;
-                    len = len.checked_add(stat_len).ok_or_else(|| {
-                        EncodeError::length_overflow("L2TP statistics")
-                    })?;
-                }
-                len
-            }
-            Self::UdpZeroCsum6Tx | Self::UdpZeroCsum6Rx | Self::Pad => 0,
-            Self::Other(attr) => Nla::value_len(attr),
-        };
-        if len > NLA_MAX_VALUE_LEN {
-            return Err(EncodeError::nla_value_too_long(
-                TryNla::kind(self),
-                len,
-                NLA_MAX_VALUE_LEN,
-            ));
-        }
-        Ok(len)
-    }
-
     pub(crate) fn validate(&self) -> Result<(), DecodeError> {
         match self {
             Self::Cookie(value) => {
@@ -295,7 +240,8 @@ impl L2tpAttribute {
             Self::Other(attr) => {
                 // A raw attribute using a known type must obey the same
                 // validation as its typed counterpart.
-                let kind = TryNla::kind(attr) & NLA_TYPE_MASK;
+                let kind =
+                    ::netlink_packet_core::Nla::kind(attr) & NLA_TYPE_MASK;
                 if (1..=L2TP_ATTR_PAD).contains(&kind) {
                     let raw = raw_nla(attr)
                         .map_err(|e| DecodeError::from(e.to_string()))?;
@@ -327,27 +273,8 @@ impl L2tpAttribute {
     }
 }
 
-impl Nla for L2tpAttribute {
-    fn value_len(&self) -> usize {
-        self.value_len_raw().expect("invalid L2TP attribute length")
-    }
-
-    fn kind(&self) -> u16 {
-        TryNla::kind(self)
-    }
-
-    fn emit_value(&self, buffer: &mut [u8]) {
-        let mut out = Vec::new();
-        TryNla::try_emit_value_into(self, &mut out).unwrap();
-        buffer[..out.len()].copy_from_slice(&out);
-    }
-}
-
-impl TryNla for L2tpAttribute {
-    fn try_emit_value_into(
-        &self,
-        out: &mut Vec<u8>,
-    ) -> Result<(), EncodeError> {
+impl ::netlink_packet_core::Nla for L2tpAttribute {
+    fn emit_value_into(&self, out: &mut Vec<u8>) -> Result<(), EncodeError> {
         self.validate()
             .map_err(|e| EncodeError::invalid_value("L2TP attribute", e))?;
         match self {
@@ -396,11 +323,11 @@ impl TryNla for L2tpAttribute {
             Self::Cookie(cookie) | Self::PeerCookie(cookie) => {
                 out.extend_from_slice(cookie);
             }
-            Self::IfName(name) => name.try_emit_into(out)?,
-            Self::Stats(stats) => try_emit_nlas_into(stats, out)?,
+            Self::IfName(name) => name.emit_into(out)?,
+            Self::Stats(stats) => emit_nlas_into(stats, out)?,
             Self::UdpZeroCsum6Tx | Self::UdpZeroCsum6Rx | Self::Pad => {}
             Self::Other(attr) => {
-                TryNla::try_emit_value_into(attr, out)?;
+                ::netlink_packet_core::Nla::emit_value_into(attr, out)?;
             }
         }
         Ok(())
@@ -443,7 +370,7 @@ impl TryNla for L2tpAttribute {
             Self::UdpZeroCsum6Tx => L2TP_ATTR_UDP_ZERO_CSUM6_TX,
             Self::UdpZeroCsum6Rx => L2TP_ATTR_UDP_ZERO_CSUM6_RX,
             Self::Pad => L2TP_ATTR_PAD,
-            Self::Other(attr) => TryNla::kind(attr),
+            Self::Other(attr) => ::netlink_packet_core::Nla::kind(attr),
         }
     }
 }
@@ -611,11 +538,11 @@ impl L2tpStatsAttribute {
             | Self::RxCookieDiscards(_)
             | Self::RxInvalid(_) => 8,
             Self::Pad => 0,
-            Self::Other(attr) => Nla::value_len(attr),
+            Self::Other(attr) => attr.value().len(),
         };
         if len > NLA_MAX_VALUE_LEN {
             return Err(EncodeError::nla_value_too_long(
-                TryNla::kind(self),
+                ::netlink_packet_core::Nla::kind(self),
                 len,
                 NLA_MAX_VALUE_LEN,
             ));
@@ -629,7 +556,7 @@ impl L2tpStatsAttribute {
 
     fn validate(&self) -> Result<(), DecodeError> {
         if let Self::Other(attr) = self {
-            let kind = TryNla::kind(attr) & NLA_TYPE_MASK;
+            let kind = ::netlink_packet_core::Nla::kind(attr) & NLA_TYPE_MASK;
             if (1..=L2TP_ATTR_RX_INVALID).contains(&kind) {
                 let raw = raw_nla(attr)
                     .map_err(|e| DecodeError::from(e.to_string()))?;
@@ -642,28 +569,8 @@ impl L2tpStatsAttribute {
     }
 }
 
-impl Nla for L2tpStatsAttribute {
-    fn value_len(&self) -> usize {
-        self.value_len_raw()
-            .expect("invalid L2TP statistics length")
-    }
-
-    fn kind(&self) -> u16 {
-        TryNla::kind(self)
-    }
-
-    fn emit_value(&self, buffer: &mut [u8]) {
-        let mut out = Vec::new();
-        TryNla::try_emit_value_into(self, &mut out).unwrap();
-        buffer[..out.len()].copy_from_slice(&out);
-    }
-}
-
-impl TryNla for L2tpStatsAttribute {
-    fn try_emit_value_into(
-        &self,
-        out: &mut Vec<u8>,
-    ) -> Result<(), EncodeError> {
+impl ::netlink_packet_core::Nla for L2tpStatsAttribute {
+    fn emit_value_into(&self, out: &mut Vec<u8>) -> Result<(), EncodeError> {
         self.validate().map_err(|e| {
             EncodeError::invalid_value("L2TP statistics attribute", e)
         })?;
@@ -682,7 +589,7 @@ impl TryNla for L2tpStatsAttribute {
             }
             Self::Pad => {}
             Self::Other(attr) => {
-                TryNla::try_emit_value_into(attr, out)?;
+                ::netlink_packet_core::Nla::emit_value_into(attr, out)?;
             }
         }
         Ok(())
@@ -701,7 +608,7 @@ impl TryNla for L2tpStatsAttribute {
             Self::RxCookieDiscards(_) => L2TP_ATTR_RX_COOKIE_DISCARDS,
             Self::RxInvalid(_) => L2TP_ATTR_RX_INVALID,
             Self::Pad => L2TP_ATTR_STATS_PAD,
-            Self::Other(attr) => TryNla::kind(attr),
+            Self::Other(attr) => ::netlink_packet_core::Nla::kind(attr),
         }
     }
 }
@@ -783,7 +690,7 @@ fn validate_empty(payload: &[u8], name: &str) -> Result<(), DecodeError> {
 // preserves the raw attribute flags without changing them.
 fn raw_nla(attr: &DefaultNla) -> Result<Vec<u8>, EncodeError> {
     let mut raw = Vec::new();
-    TryEmit::try_emit_into(attr, &mut raw)?;
+    ::netlink_packet_core::Nla::emit_nla_into(attr, &mut raw)?;
     Ok(raw)
 }
 

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 
 use netlink_packet_core::{
-    DecodeError, Emitable, EncodeError, ErrorContext, NlasIterator, Parseable,
-    ParseableParametrized, TryEmit, try_emit_nlas_into,
+    DecodeError, EncodeError, ErrorContext, NlasIterator, Parseable,
+    ParseableParametrized, emit_nlas_into,
 };
 use netlink_packet_generic::{GenlFamily, GenlHeader};
 
@@ -98,21 +98,10 @@ impl GenlFamily for L2tpMessage {
     }
 }
 
-impl Emitable for L2tpMessage {
-    fn emit(&self, buffer: &mut [u8]) {
-        let data = TryEmit::try_emit(self).expect("invalid L2TP message");
-        buffer[..data.len()].copy_from_slice(&data);
-    }
-
-    fn buffer_len(&self) -> usize {
-        TryEmit::try_emit(self).expect("invalid L2TP message").len()
-    }
-}
-
-impl TryEmit for L2tpMessage {
-    fn try_emit_into(&self, out: &mut Vec<u8>) -> Result<(), EncodeError> {
+impl ::netlink_packet_core::Emitable for L2tpMessage {
+    fn emit_into(&self, out: &mut Vec<u8>) -> Result<(), EncodeError> {
         let start = out.len();
-        try_emit_nlas_into(&self.attributes, out)?;
+        emit_nlas_into(&self.attributes, out)?;
         let len = out.len() - start;
         if len > u32::MAX as usize {
             out.truncate(start);
